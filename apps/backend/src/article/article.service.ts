@@ -2,12 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { EntityManager, QueryOrder, wrap } from '@mikro-orm/core';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/mysql';
-
 import { User } from '../user/user.entity';
 import { Article } from './article.entity';
 import { IArticleRO, IArticlesRO, ICommentsRO } from './article.interface';
 import { Comment } from './comment.entity';
 import { CreateArticleDto, CreateCommentDto } from './dto';
+import { Tag } from '../tag/tag.entity';
 
 @Injectable()
 export class ArticleService {
@@ -19,12 +19,15 @@ export class ArticleService {
     private readonly commentRepository: EntityRepository<Comment>,
     @InjectRepository(User)
     private readonly userRepository: EntityRepository<User>,
+    @InjectRepository(Tag)
+    private readonly tagRepository: EntityRepository<Tag>,
   ) {}
 
   async findAll(userId: number, query: Record<string, string>): Promise<IArticlesRO> {
     const user = userId
       ? await this.userRepository.findOne(userId, { populate: ['followers', 'favorites'] })
       : undefined;
+
     const qb = this.articleRepository.createQueryBuilder('a').select('a.*').leftJoin('a.author', 'u');
 
     if ('tag' in query) {
@@ -73,6 +76,7 @@ export class ArticleService {
     const user = userId
       ? await this.userRepository.findOne(userId, { populate: ['followers', 'favorites'] })
       : undefined;
+
     const res = await this.articleRepository.findAndCount(
       { author: { followers: userId } },
       {
@@ -84,6 +88,7 @@ export class ArticleService {
     );
 
     console.log('findFeed', { articles: res[0], articlesCount: res[1] });
+
     return { articles: res[0].map((a) => a.toJSON(user!)), articlesCount: res[1] };
   }
 
@@ -154,6 +159,17 @@ export class ArticleService {
       { populate: ['followers', 'favorites', 'articles'] },
     );
     const article = new Article(user!, dto.title, dto.description, dto.body);
+    
+    // Insert new tags into Tag table if they don't already exist
+    for (const tagName of dto.tagList) {
+      let tag = await this.tagRepository.findOne({ tag: tagName });
+      if (!tag) {
+        tag = new Tag();
+        tag.tag = tagName;
+        this.em.persist(tag);
+      }
+    }
+    
     article.tagList.push(...dto.tagList);
     user?.articles.add(article);
     await this.em.flush();
